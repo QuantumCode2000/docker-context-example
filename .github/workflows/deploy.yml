@@ -1,0 +1,42 @@
+name: Build (remote) & Deploy with Compose
+
+on:
+  push:
+    branches: ['main']
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          # evita prompt de host key
+          touch ~/.ssh/known_hosts
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Create Docker context to VPS (over SSH)
+        run: |
+          docker context create vps --docker "host=ssh://${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}"
+          docker context use vps
+          docker context ls
+
+      - name: Remote build & up (on VPS) with Compose
+        run: |
+          # Construye en el Docker del VPS usando el contexto del repo (streaming)
+          docker --context vps compose -f docker-compose.yml up -d --build --remove-orphans
+
+      - name: Cleanup old images (on VPS)
+        run: |
+          docker --context vps image prune -f
