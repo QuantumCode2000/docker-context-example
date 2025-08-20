@@ -15,7 +15,7 @@ app.get('/health', (req, res) => {
 
 // Root route
 app.get('/', (req, res) => {
-  res.send('Mini App API is running in HOst');
+  res.send('Mini App API is deploy with context');
 });
 
 // 404 handler

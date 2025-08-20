@@ -38,7 +38,6 @@ jobs:
           docker --context vps login ghcr.io -u quantumcode2000 --password "${{ secrets.GHCR_TOKEN }}"
 
       # --- Build en el VPS SIN levantar contenedores ---
-      # Construye imagen local "mi-aplicacion-node:latest" en el VPS
       - name: Remote docker build (VPS daemon)
         run: |
           docker --context vps build -t mi-aplicacion-node:latest .
@@ -53,12 +52,30 @@ jobs:
       - name: Remove temporary build images on VPS
         run: |
           docker --context vps rmi -f mi-aplicacion-node:latest || true
+          docker --context vps rmi -f mi-aplicacion-node:1.0.0 || true
 
-      # --- Deploy en /root/test usando la imagen de GHCR ---
+      # --- Asegurar carpeta y .env vacío en /root/test ---
+      - name: Ensure /root/test and empty .env
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "\
+            sudo mkdir -p /root/test && \
+            sudo touch /root/test/.env && \
+            sudo chmod 644 /root/test/.env \
+          "
+
+      # --- Deploy en /root/test usando la imagen de GHCR (pull + up) ---
       - name: Deploy using compose in /root/test (pull + up)
         run: |
-          docker --context vps compose -f /root/test/docker-compose.yml pull
-          docker --context vps compose -f /root/test/docker-compose.yml up -d --remove-orphans
+          docker --context vps compose \
+            --project-directory /root/test \
+            --env-file /root/test/.env \
+            -f /root/test/docker-compose.yml \
+            pull
+          docker --context vps compose \
+            --project-directory /root/test \
+            --env-file /root/test/.env \
+            -f /root/test/docker-compose.yml \
+            up -d --remove-orphans
 
       # --- Limpieza de imágenes huérfanas en VPS ---
       - name: Cleanup old images (on VPS)
