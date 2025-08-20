@@ -17,7 +17,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # --- SSH listo para el contexto remoto ---
+      # --- SSH listo para docker context remoto ---
       - name: Prepare SSH key
         run: |
           mkdir -p ~/.ssh
@@ -48,36 +48,27 @@ jobs:
           docker --context vps tag mi-aplicacion-node:latest ghcr.io/quantumcode2000/docker-context-example:latest
           docker --context vps push ghcr.io/quantumcode2000/docker-context-example:latest
 
-      # --- Borrar imágenes temporales locales (mi-aplicacion-node) en el VPS ---
+      # --- Borrar imagen temporal local en VPS ---
       - name: Remove temporary build images on VPS
         run: |
           docker --context vps rmi -f mi-aplicacion-node:latest || true
           docker --context vps rmi -f mi-aplicacion-node:1.0.0 || true
 
-      # --- Asegurar carpeta y .env vacío en /root/test ---
-      - name: Ensure /root/test and empty .env
-        run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "\
-            sudo mkdir -p /root/test && \
-            sudo touch /root/test/.env && \
-            sudo chmod 644 /root/test/.env \
-          "
+      # --- Deploy por SSH dentro del VPS: pull + up en /root/test ---
+      - name: Deploy on VPS via SSH (compose pull & up)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          script_stop: true
+          script: |
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u "quantumcode2000" --password-stdin
 
-      # --- Deploy en /root/test usando la imagen de GHCR (pull + up) ---
-      - name: Deploy using compose in /root/test (pull + up)
-        run: |
-          docker --context vps compose \
-            --project-directory /root/test \
-            --env-file /root/test/.env \
-            -f /root/test/docker-compose.yml \
-            pull
-          docker --context vps compose \
-            --project-directory /root/test \
-            --env-file /root/test/.env \
-            -f /root/test/docker-compose.yml \
-            up -d --remove-orphans
+            cd /root/test
+            docker compose pull
+            docker compose up -d --remove-orphans
 
-      # --- Limpieza de imágenes huérfanas en VPS ---
-      - name: Cleanup old images (on VPS)
-        run: |
-          docker --context vps image prune -f
+            # Limpieza de imágenes huérfanas
+            docker image prune -f
