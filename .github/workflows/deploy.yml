@@ -17,26 +17,50 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # --- SSH listo para el contexto remoto ---
       - name: Prepare SSH key
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          # evita prompt de host key
           touch ~/.ssh/known_hosts
           ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Create Docker context to VPS (over SSH)
         run: |
-          docker context create vps --docker "host=ssh://${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}"
+          docker context create vps --docker "host=ssh://${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" || true
           docker context use vps
           docker context ls
 
-      - name: Remote build & up (on VPS) with Compose
+      # --- Login a GHCR en el daemon remoto (VPS) ---
+      - name: Login GHCR on VPS
         run: |
-          # Construye en el Docker del VPS usando el contexto del repo (streaming)
-          docker --context vps compose -f docker-compose.yml up -d --build --remove-orphans
+          docker --context vps login ghcr.io -u quantumcode2000 --password "${{ secrets.GHCR_TOKEN }}"
 
+      # --- Build en el VPS SIN levantar contenedores ---
+      # Construye imagen local "mi-aplicacion-node:latest" en el VPS
+      - name: Remote docker build (VPS daemon)
+        run: |
+          docker --context vps build -t mi-aplicacion-node:latest .
+
+      # --- Tag + Push a GHCR desde el VPS ---
+      - name: Tag & Push to GHCR (from VPS)
+        run: |
+          docker --context vps tag mi-aplicacion-node:latest ghcr.io/quantumcode2000/docker-context-example:latest
+          docker --context vps push ghcr.io/quantumcode2000/docker-context-example:latest
+
+      # --- Borrar imágenes temporales locales (mi-aplicacion-node) en el VPS ---
+      - name: Remove temporary build images on VPS
+        run: |
+          docker --context vps rmi -f mi-aplicacion-node:latest || true
+
+      # --- Deploy en /root/test usando la imagen de GHCR ---
+      - name: Deploy using compose in /root/test (pull + up)
+        run: |
+          docker --context vps compose -f /root/test/docker-compose.yml pull
+          docker --context vps compose -f /root/test/docker-compose.yml up -d --remove-orphans
+
+      # --- Limpieza de imágenes huérfanas en VPS ---
       - name: Cleanup old images (on VPS)
         run: |
           docker --context vps image prune -f
